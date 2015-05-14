@@ -1,11 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+import           Prelude             hiding (concatMap, find, mapM, mapM_)
+
 import           Control.Applicative
 import           Control.Lens
-import           Control.Monad
 import           Data.Aeson          (toJSON)
 import           Data.Aeson.Lens
-import           Data.List
+import           Data.Foldable
 import           Data.Map            (Map)
 import qualified Data.Map            as M
 import           Data.Monoid
@@ -15,6 +16,7 @@ import           Data.Text           (Text)
 import qualified Data.Text           as T
 import qualified Data.Text.Encoding  as TE
 import qualified Data.Text.IO        as T
+import           Data.Traversable
 import           Network.Wreq
 import           System.Environment
 
@@ -57,26 +59,34 @@ get' (Creds (k,t)) u = getWith (defaults & param "key" .~ [k] & param "token" .~
 
 post' (Creds (k,t)) u args = postWith (defaults & params .~ (("key", k) : ("token", t) : args)) (T.unpack u) (TE.encodeUtf8 "")
 
+put' (Creds (k,t)) u args = putWith (defaults & params .~ (("key", k) : ("token", t) : args)) (T.unpack u) (TE.encodeUtf8 "")
+
+delete' (Creds (k,t)) u = deleteWith (defaults & params .~ (("key", k) : ("token", t) : [])) (T.unpack u)
+
 groupEndpoint :: Text -> Text
 groupEndpoint orgName = "https://api.trello.com/1/organizations/" <> orgName <> "/boards"
 boardListEndpoint :: BoardId -> Text
 boardListEndpoint (BoardId i) = "https://api.trello.com/1/boards/" <> i <> "/lists"
+listEndpoint :: ListId -> Text
+listEndpoint (ListId i) = "https://api.trello.com/1/lists/" <> i
 listCardsEndpoint :: ListId -> Text
-listCardsEndpoint (ListId i) = "https://api.trello.com/1/lists/" <> i <> "/cards"
+listCardsEndpoint l = listEndpoint l  <> "/cards"
+listClosedEndpoint :: ListId -> Text
+listClosedEndpoint l = listEndpoint l  <> "/closed"
 checklistEndpoint :: Text -> Text
 checklistEndpoint i = "https://api.trello.com/1/checklists/" <> i
+cardEndpoint :: CardId -> Text
+cardEndpoint (CardId i) = "https://api.trello.com/1/cards/" <> i
 
 getChecklist :: Creds -> Text -> IO [Text]
 getChecklist creds checklistId =
   do r <- get' creds (checklistEndpoint checklistId)
-     print (r ^? responseBody)
      let items = r ^.. responseBody . key "checkItems" . values
      return (map (\i -> i ^?! key "name" . _String) items)
 
 getCards :: Creds -> ListId -> IO [Card]
 getCards creds listId =
   do r <- get' creds (listCardsEndpoint listId)
-     print (r ^? responseBody)
      mapM (\v ->
              do let checklistId = v ^? key "idChecklists" . nth 0 . _String
                 checklist <- case checklistId of
@@ -117,11 +127,20 @@ addList creds boardId name =
   do r <- post' creds (boardListEndpoint boardId) [("name", name)]
      return $ ListId $ r ^?! responseBody . key "id" . _String
 
+archiveList :: Creds -> ListId -> IO ()
+archiveList creds list = do put' creds (listClosedEndpoint list) [("value", "true")]
+                            return ()
+
 addCard :: Creds -> ListId -> Text -> Text -> IO CardId
 addCard creds listId name desc =
   do r <- post' creds (listCardsEndpoint listId)
                       [("name", name),("due", "null"),("desc", desc)]
      return $ CardId $ r ^?! responseBody . key "id" . _String
+
+deleteCard :: Creds -> CardId -> IO ()
+deleteCard creds card = do delete' creds (cardEndpoint card)
+                           return ()
+
 
 mainBoard = BoardId "55528aa166fe462917fc9dc0"
 
@@ -133,19 +152,66 @@ projects =
 notColonPrefixed :: Text -> Bool
 notColonPrefixed s = not $ T.isPrefixOf ":" s
 
+data Change = AddList BoardId List
+            | RemoveList BoardId ListId
+            | AddCard ListId Card
+            | RemoveCard ListId CardId
+
+diffCards :: ListId -> Set Card -> Set Card -> [Change]
+diffCards l old new = concatMap (\o -> case find (\n -> cardName o == cardName n) new of
+                                         Nothing -> [RemoveCard l (cardId o)]
+                                         Just n ->
+                                           if o == n
+                                             then []
+                                             else error $ "Don't support diffing cards yet: "
+                                                        <> show o <> " to " <> show n)
+                                old
+                   <> concatMap (\n -> case find (\o -> cardName o == cardName n) old of
+                                         Nothing -> [AddCard l n]
+                                         Just _ -> []) new
+
+diffLists :: BoardId -> Set List -> Set List -> [Change]
+diffLists b old new = concatMap (\o -> case find (\n -> listName o == listName n) new of
+                                         Nothing -> [RemoveList b (listId o)]
+                                         Just n -> diffCards (listId o)
+                                                             (listCards o)
+                                                             (listCards n)) old
+                   <> concatMap (\n -> case find (\o -> listName o == listName n) old of
+                                         Nothing -> [AddList b n]
+                                         Just _ -> []) new
+
+effectChange :: Creds -> Change -> IO ()
+effectChange creds (AddList board list) =
+  do lid <- addList creds board (listName list)
+     mapM_ (\c -> addCard creds lid (cardName c) (cardDescription c))
+           (S.toList (listCards list))
+effectChange creds (RemoveList board list) = archiveList creds list
+effectChange creds (AddCard list card) =
+  do addCard creds list (cardName card) (cardDescription card)
+     return ()
+effectChange creds (RemoveCard list card) = deleteCard creds card
+
 main :: IO ()
 main = do readDotEnv
           creds <- readCreds
+          projectBoards <- mapM (\(i, name, _) -> do lists <- S.fromList <$> getLists creds i
+                                                     return (Board i name lists))
+                                               projects
           projectLists <- getLists creds mainBoard
-          forM_ projects $ \(projectBoardId, projectName, projectUrl) ->
-            do projectListId <- case find ((== projectName) . listName) projectLists of
-                                  Nothing -> addList creds mainBoard projectName
-                                  Just list -> return (listId list)
-               tasks <- filter (notColonPrefixed.listName) <$> getLists creds projectBoardId
-               existing <- getCards creds projectListId
-               forM_ tasks $ \task ->
-                  do let prefixedName = projectName <> ": " <> (listName task)
-                     case find ((== prefixedName) . cardName) existing of
-                       Nothing -> addCard creds projectListId prefixedName projectUrl
-                       Just card -> return (cardId card)
-                     return ()
+
+          let addPrefix p c = c { cardName = p <> cardName c }
+          let cards = concatMap (\b -> case find (\l -> listName l == "Top 3")
+                                                 (boardLists b) of
+                                  Nothing -> []
+                                  Just l -> map (addPrefix (boardName b <> ": "))
+                                               (S.toList (listCards l)))
+                          projectBoards
+          let allExisting = S.fromList $
+                              concatMap (\l -> map cardName $ S.toList $ listCards l)
+                                        projectLists
+          let newCards = S.fromList $ filter (\c -> not $ S.member (cardName c) allExisting) cards
+          let newLists = S.fromList $ map (\l -> if listName l == "Later"
+                                                    then l { listCards = S.union newCards (listCards l)}
+                                                    else l) projectLists
+          let changes = diffLists mainBoard (S.fromList projectLists) newLists
+          mapM_ (effectChange creds) changes
