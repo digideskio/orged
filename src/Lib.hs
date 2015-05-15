@@ -6,6 +6,7 @@ import           Prelude             hiding (concatMap, elem, find, mapM, mapM_)
 
 import           Control.Applicative
 import           Control.Lens
+import           Control.Monad       (when)
 import           Data.Aeson          (toJSON)
 import           Data.Aeson.Lens
 import           Data.Foldable
@@ -21,13 +22,15 @@ import qualified Data.Text.Encoding  as TE
 import qualified Data.Text.IO        as T
 import           Data.Traversable
 import           Network.Wreq
+import           System.Directory    (doesFileExist)
 import           System.Environment
 
 readDotEnv :: IO ()
-readDotEnv = do envs <- T.lines <$> T.readFile ".env"
-                mapM_ (\s -> let [name, val] = T.splitOn "=" s in
-                                 setEnv (T.unpack name) (T.unpack val))
-                      envs
+readDotEnv = do e <- doesFileExist ".env"
+                when e $ do envs <- T.lines <$> T.readFile ".env"
+                            mapM_ (\s -> let [name, val] = T.splitOn "=" s in
+                                             setEnv (T.unpack name) (T.unpack val))
+                                  envs
 
 newtype Creds = Creds { unCreds :: (Text, Text) } deriving (Eq, Show, Ord)
 
