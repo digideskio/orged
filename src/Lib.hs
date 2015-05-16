@@ -300,9 +300,10 @@ top3DoneStrategy summaryBoard projectBoards =
 run :: IO ()
 run = do readDotEnv
          creds <- readCreds
+         summaryName <- T.pack <$> getEnv "ORGED_SUMMARY_BOARD"
          allBoards <- getOrgedUserBoards creds
-         let [summaryBoard] = filter ((== "Position Experiment") . boardName) allBoards
-         let projectBoards = filter ((/= "Position Experiment") . boardName) allBoards
+         let [summaryBoard] = filter ((== summaryName) . boardName) allBoards
+         let projectBoards = filter ((/= summaryName) . boardName) allBoards
 
          let newSummary = top3DoneStrategy summaryBoard projectBoards
 
