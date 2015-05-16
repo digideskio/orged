@@ -39,6 +39,9 @@ readCreds = do key <- T.pack <$> getEnv "TRELLO_DEVELOPER_PUBLIC_KEY"
                token <- T.pack <$> getEnv "TRELLO_MEMBER_TOKEN"
                return (Creds (key, token))
 
+readSummaryName :: IO Text
+readSummaryName = T.pack <$> getEnv "ORGED_SUMMARY_BOARD"
+
 
 newtype CardId = CardId { unCardId :: Text } deriving (Eq, Show, Ord)
 data Card = Card { cardId          :: CardId
@@ -131,6 +134,12 @@ getLists creds boardId =
 
 notClosed v = not $ v ^?! key "closed" . _Bool
 
+getUserBoardNames :: Creds -> Text -> IO [Text]
+getUserBoardNames creds userId =
+  do r <- get' creds (userBoardsEndpoint userId)
+     return $ map (\v -> (v ^?! key "name" . _String))
+                  (filter notClosed (r ^.. responseBody . values))
+
 getUserBoards :: Creds -> Text -> IO [Board]
 getUserBoards creds userId =
   do r <- get' creds (userBoardsEndpoint userId)
@@ -142,6 +151,7 @@ getUserBoards creds userId =
                                  lists
                )
                (filter notClosed (r ^.. responseBody . values))
+
 
 getOrgBoards :: Creds -> Text -> IO [Board]
 getOrgBoards creds orgName =
@@ -255,8 +265,13 @@ effectChange creds (SetCardDesc card desc) = setCardDesc creds card desc
 effectChange creds (SetCardLabels card labels) = setCardLabels creds card labels
 effectChange creds (SetCardSubscribed card subscribed) = setCardSubscribed creds card subscribed
 
+getOrgedUserBoards :: Creds -> IO [Board]
 getOrgedUserBoards creds = do userId <- T.pack <$> getEnv "TRELLO_USER_ID"
                               getUserBoards creds userId
+
+getOrgedUserBoardNames :: Creds -> IO [Text]
+getOrgedUserBoardNames creds = do userId <- T.pack <$> getEnv "TRELLO_USER_ID"
+                                  getUserBoardNames creds userId
 
 top3DoneStrategy :: Board -> [Board] -> Board
 top3DoneStrategy summaryBoard projectBoards =
@@ -300,7 +315,7 @@ top3DoneStrategy summaryBoard projectBoards =
 run :: IO ()
 run = do readDotEnv
          creds <- readCreds
-         summaryName <- T.pack <$> getEnv "ORGED_SUMMARY_BOARD"
+         summaryName <- readSummaryName
          allBoards <- getOrgedUserBoards creds
          let [summaryBoard] = filter ((== summaryName) . boardName) allBoards
          let projectBoards = filter ((/= summaryName) . boardName) allBoards
