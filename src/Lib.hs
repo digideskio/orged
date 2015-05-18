@@ -276,9 +276,11 @@ getOrgedUserBoardNames creds = do userId <- T.pack <$> getEnv "TRELLO_USER_ID"
 top3DoneStrategy :: Board -> [Board] -> Board
 top3DoneStrategy summaryBoard projectBoards =
   do let addPrefix p c = c { cardName = p <> cardName c }
-     let addDoneLabel c = case find (== "green") (cardLabels c) of
-                            Nothing -> c { cardLabels = "green" : cardLabels c}
-                            Just _ -> c
+     let addLabel l c = case find (== l) (cardLabels c) of
+                          Nothing -> c { cardLabels = l : cardLabels c}
+                          Just _ -> c
+     let addDoneLabel = addLabel "green"
+     let addTodoLabel = addLabel "yellow"
      let customize c = c { cardSubscribed = True, cardDescription = cardUrl c, cardLabels = [] }
      let findAll name = concatMap (\b -> case find (\l -> listName l == name)
                                                    (boardLists b) of
@@ -296,7 +298,9 @@ top3DoneStrategy summaryBoard projectBoards =
            S.fromList $ filter (\c -> not $ S.member (cardName c) allExisting)
                                (map customize allOurs)
      let updateCard c = case find ((== cardName c) . cardName) done of
-                          Nothing -> c
+                          Nothing -> case find ((== cardName c) . cardName) top3 of
+                                       Nothing -> c
+                                       Just _ -> addTodoLabel c
                           Just _ -> addDoneLabel c
      let permittedCard c = case cardSubscribed c of
                              True -> case find ((== cardName c) . cardName) allOurs of
