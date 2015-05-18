@@ -1,11 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
+import qualified Configuration.Dotenv
 import           Control.Applicative
-import           Control.Monad.Trans (liftIO)
+import           Control.Monad        (when)
+import           Control.Monad.Trans  (liftIO)
 import           Data.Monoid
-import qualified Data.Text           as T
-import qualified Data.Text.Lazy      as LT
+import qualified Data.Text            as T
+import qualified Data.Text.Lazy       as LT
+import           System.Directory
 import           System.Environment
 import           Web.Scotty
 
@@ -26,11 +29,12 @@ page c = "<html><body><style type=\"text/css\">\
 main :: IO ()
 main = do
   port <- read <$> getEnv "PORT"
-  scotty port $ do get "/" $ do liftIO Lib.readDotEnv
-                                creds <- liftIO Lib.readCreds
-                                s <- liftIO Lib.readSummaryName
-                                names <- filter (/= s) <$>
-                                         liftIO (Lib.getOrgedUserBoardNames creds)
-                                html (page (T.intercalate "\n" (s <> "\n-----":names)))
+  scotty port $ do get "/" $ do p <- liftIO $
+                                  do e <- doesFileExist ".env"
+                                     when e $ Configuration.Dotenv.loadFile True ".env"
+                                     s <- liftIO Lib.readSummaryName
+                                     names <- filter (/= s) <$> liftIO Lib.getOrgedUserBoardNames
+                                     return (T.intercalate "\n" (s <> "\n-----":names))
+                                html (page p)
                    post "/" $ do liftIO Lib.run
                                  redirect "/"
