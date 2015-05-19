@@ -27,8 +27,6 @@ import           Data.Map            (Map)
 import qualified Data.Map            as M
 import           Data.Maybe          (catMaybes)
 import           Data.Monoid
-import           Data.Set            (Set)
-import qualified Data.Set            as S
 import           Data.Text           (Text)
 import qualified Data.Text           as T
 import qualified Data.Text.Encoding  as TE
@@ -60,13 +58,13 @@ data Card = Card { cardId          :: CardId
 newtype ListId = ListId { unListId :: Text } deriving (Eq, Show, Ord)
 data List = List { listId    :: ListId
                  , listName  :: Text
-                 , listCards :: Set Card
+                 , listCards :: [Card]
                  } deriving (Eq, Show, Ord)
 
 newtype BoardId = BoardId { unBoardId :: Text } deriving (Eq, Show, Ord)
 data Board = Board { boardId    :: BoardId
                    , boardName  :: Text
-                   , boardLists :: Set List
+                   , boardLists :: [List]
                    } deriving (Eq, Show, Ord)
 
 
@@ -85,7 +83,7 @@ getUserBoards userId =
      r <- get' creds (userBoardsEndpoint userId)
      mapM (\v ->
                do let boardId = BoardId (v ^?! key "id" . _String)
-                  lists <- S.fromList <$> getLists creds boardId
+                  lists <- getLists creds boardId
                   return $ Board boardId
                                  (v ^?! key "name" . _String)
                                  lists
@@ -105,7 +103,7 @@ getOrgBoards orgName =
      r <- get' creds (groupEndpoint orgName)
      mapM (\v ->
                do let boardId = BoardId (v ^?! key "id" . _String)
-                  lists <- S.fromList <$> getLists creds boardId
+                  lists <- getLists creds boardId
                   return $ Board boardId
                                  (v ^?! key "name" . _String)
                                  lists
@@ -184,7 +182,7 @@ getLists creds boardId =
                     cards <- getCards creds listId
                     return $ List listId
                                   (v ^?! key "name" . _String)
-                                  (S.fromList cards)
+                                  cards
                                   )
                   (r ^.. responseBody . values)
 
@@ -228,9 +226,9 @@ addCard creds listId name desc subscribe labels =
                             then rest
                             else ("labels", T.intercalate "," labels) : rest
 
-deleteCard :: Creds -> CardId -> IO ()
-deleteCard creds card = do delete' creds (cardEndpoint card)
-                           return ()
+archiveCard :: Creds -> CardId -> IO ()
+archiveCard creds card = do put' creds (cardEndpoint card) [("closed", "true")]
+                            return ()
 
 
 -- Diffing implementation
@@ -244,7 +242,7 @@ data Change = AddList BoardId List
             | SetCardSubscribed CardId Bool
      deriving (Eq, Show, Ord)
 
-diffCards :: ListId -> Set Card -> Set Card -> [(Text, Change)]
+diffCards :: ListId -> [Card] -> [Card] -> [(Text, Change)]
 diffCards l old new =
   concatMap (\o -> case find (\n -> cardName o == cardName n) new of
                      Nothing -> [("Remove card '" <> cardName o <> "'"
@@ -268,7 +266,7 @@ diffCards l old new =
                         Nothing -> [("Add card '" <> cardName n <> "'", AddCard l n)]
                         Just _ -> []) new
 
-diffLists :: BoardId -> Set List -> Set List -> [(Text, Change)]
+diffLists :: BoardId -> [List] -> [List] -> [(Text, Change)]
 diffLists b old new = concatMap (\o -> case find (\n -> listName o == listName n) new of
                                          Nothing -> [("Remove list '" <> listName o <> "'"
                                                      ,RemoveList b (listId o))]
@@ -284,12 +282,12 @@ effectChange :: Creds -> Change -> IO ()
 effectChange creds (AddList board list) =
   do lid <- addList creds board (listName list)
      mapM_ (effectChange creds . (AddCard (listId list)))
-           (S.toList (listCards list))
+           (listCards list)
 effectChange creds (RemoveList board list) = archiveList creds list
 effectChange creds (AddCard list card) =
   do addCard creds list (cardName card) (cardDescription card) (cardSubscribed card) (cardLabels card)
      return ()
-effectChange creds (RemoveCard list card) = deleteCard creds card
+effectChange creds (RemoveCard list card) = archiveCard creds card
 effectChange creds (SetCardDesc card desc) = setCardDesc creds card desc
 effectChange creds (SetCardLabels card labels) = setCardLabels creds card labels
 effectChange creds (SetCardSubscribed card subscribed) = setCardSubscribed creds card subscribed

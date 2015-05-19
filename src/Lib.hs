@@ -2,8 +2,8 @@
 
 module Lib where
 
-import           Prelude              hiding (concatMap, elem, find, mapM,
-                                       mapM_)
+import           Prelude              hiding (any, concatMap, elem, elem, find,
+                                       mapM, mapM_)
 
 import qualified Configuration.Dotenv
 import           Control.Applicative
@@ -16,8 +16,6 @@ import           Data.Map             (Map)
 import qualified Data.Map             as M
 import           Data.Maybe           (catMaybes)
 import           Data.Monoid
-import           Data.Set             (Set)
-import qualified Data.Set             as S
 import           Data.Text            (Text)
 import qualified Data.Text            as T
 import qualified Data.Text.Encoding   as TE
@@ -45,39 +43,59 @@ top3DoneStrategy summaryBoard projectBoards =
      let setLabel l c = c { cardLabels = [l] }
      let setDoneLabel = setLabel "green"
      let setTodoLabel = setLabel "yellow"
+     let setInbetweenLabel = setLabel "purple"
      let customize c = c { cardSubscribed = True, cardDescription = cardUrl c, cardLabels = [] }
      let findAll name = concatMap (\b -> case find (\l -> listName l == name)
                                                    (boardLists b) of
                                     Nothing -> []
                                     Just l -> map (addPrefix (boardName b <> ": "))
-                                                  (S.toList (listCards l)))
+                                                  (listCards l))
                             projectBoards
+     let exists name lists = any ((== name) . listName) lists
      let top3 = findAll "Top 3"
      let done = findAll "Done"
-     let allOurs = top3 <> done
-     let allExisting = S.fromList $
-                         concatMap (\l -> map cardName $ S.toList $ listCards l)
-                                   (boardLists summaryBoard)
+     let inbetween =
+           concatMap (\b ->
+             let lists = boardLists b in
+             if exists "Top 3" lists &&
+                exists "Done" (dropWhile ((/= "Top 3") . listName) lists)
+                then let middle =
+                           takeWhile ((/= "Done") . listName)
+                           . tail
+                           . dropWhile ((/= "Top 3") . listName)
+                           $ lists in
+                         concatMap (map (addPrefix (boardName b <> ": ")) . listCards)
+                                   middle
+
+                else []) projectBoards
+     let allOurs = top3 <> inbetween <> done
+     let allExisting = concatMap (\l -> map cardName $ listCards l)
+                                 (boardLists summaryBoard)
      let unscheduled =
-           S.fromList $ filter (\c -> not $ S.member (cardName c) allExisting)
-                               (map customize allOurs)
-     let updateCard c = case find ((== cardName c) . cardName) done of
-                          Nothing -> case find ((== cardName c) . cardName) top3 of
-                                       Nothing -> c
-                                       Just _ -> setTodoLabel c
-                          Just _ -> setDoneLabel c
+           filter (\c -> not $ elem (cardName c) allExisting)
+                  (map customize allOurs)
+     let updateCard c =
+           case find ((== cardName c) . cardName) done of
+             Nothing ->
+               case find ((== cardName c) . cardName) top3 of
+                 Nothing ->
+                   case find ((== cardName c) . cardName) inbetween of
+                     Nothing -> c
+                     Just _ -> setInbetweenLabel c
+                 Just _ -> setTodoLabel c
+             Just _ -> setDoneLabel c
      let permittedCard c = case cardSubscribed c of
                              True -> case find ((== cardName c) . cardName) allOurs of
                                        Nothing -> False
                                        Just _ -> True
                              False -> True
-     let newLists = S.map (\l ->
+     let newLists = map (\l ->
            let newList = if listName l == "Unscheduled"
-                            then l { listCards = S.union unscheduled (listCards l)}
+                            then l { listCards = unscheduled <> (listCards l)}
                             else l in
-           newList { listCards = S.filter permittedCard $
-                                 S.map updateCard (listCards newList)})
-                                                  (boardLists summaryBoard)
+           newList { listCards = filter permittedCard $
+                                 map updateCard (listCards newList)})
+                                                (boardLists summaryBoard)
      summaryBoard { boardLists = newLists }
 
 run :: (Text -> IO ()) -> IO ()
