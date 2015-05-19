@@ -52,7 +52,6 @@ newtype CardId = CardId { unCardId :: Text } deriving (Eq, Show, Ord)
 data Card = Card { cardId          :: CardId
                  , cardName        :: Text
                  , cardDescription :: Text
-                 , cardCheckList   :: Maybe (Set Text)
                  , cardSubscribed  :: Bool
                  , cardLabels      :: [Text]
                  , cardUrl         :: Text
@@ -115,11 +114,12 @@ getOrgBoards orgName =
 
 -- Diffing API
 
-updateBoard :: Board -> Board -> IO ()
-updateBoard old new =
+updateBoard :: (Text -> IO ()) -> Board -> Board -> IO ()
+updateBoard log old new =
   do creds <- readCreds
      let changes = diffLists (boardId old) (boardLists old) (boardLists new)
-     mapM_ (effectChange creds) changes
+     mapM_ (\(d, c) -> do log d
+                          effectChange creds c) changes
 
 -- HTTP Helpers
 
@@ -140,6 +140,7 @@ delete' (Creds (k,t)) u =
 
 
 -- Endpoints
+
 groupEndpoint :: Text -> Text
 groupEndpoint orgName = "https://api.trello.com/1/organizations/" <> orgName <> "/boards"
 boardListEndpoint :: BoardId -> Text
@@ -150,8 +151,6 @@ listCardsEndpoint :: ListId -> Text
 listCardsEndpoint l = listEndpoint l  <> "/cards"
 listClosedEndpoint :: ListId -> Text
 listClosedEndpoint l = listEndpoint l  <> "/closed"
-checklistEndpoint :: Text -> Text
-checklistEndpoint i = "https://api.trello.com/1/checklists/" <> i
 cardEndpoint :: CardId -> Text
 cardEndpoint (CardId i) = "https://api.trello.com/1/cards/" <> i
 cardSubscribedEndpoint :: CardId -> Text
@@ -167,28 +166,16 @@ userBoardsEndpoint userId = "https://api.trello.com/1/members/" <> userId <> "/b
 
 -- Private API functions
 
-getChecklist :: Creds -> Text -> IO [Text]
-getChecklist creds checklistId =
-  do r <- get' creds (checklistEndpoint checklistId)
-     let items = r ^.. responseBody . key "checkItems" . values
-     return (map (\i -> i ^?! key "name" . _String) items)
-
 getCards :: Creds -> ListId -> IO [Card]
 getCards creds listId =
   do r <- get' creds (listCardsEndpoint listId)
-     mapM (\v ->
-             do let checklistId = v ^? key "idChecklists" . nth 0 . _String
-                checklist <- case checklistId of
-                               Nothing -> return Nothing
-                               Just i -> Just . S.fromList <$> getChecklist creds i
-                return $ Card (CardId (v ^?! key "id" . _String))
+     return $ map (\v -> Card (CardId (v ^?! key "id" . _String))
                               (v ^?! key "name" . _String)
                               (v ^?! key "desc" . _String)
-                              checklist
                               (v ^?! key "subscribed" . _Bool)
                               (v ^.. key "labels" . values . key "color" . _String)
                               (v ^?! key "shortUrl" . _String))
-          (r ^.. responseBody . values)
+                  (r ^.. responseBody . values)
 
 getLists :: Creds -> BoardId -> IO [List]
 getLists creds boardId =
@@ -245,11 +232,9 @@ deleteCard :: Creds -> CardId -> IO ()
 deleteCard creds card = do delete' creds (cardEndpoint card)
                            return ()
 
-notColonPrefixed :: Text -> Bool
-notColonPrefixed s = not $ T.isPrefixOf ":" s
-
 
 -- Diffing implementation
+
 data Change = AddList BoardId List
             | RemoveList BoardId ListId
             | AddCard ListId Card
@@ -259,36 +244,40 @@ data Change = AddList BoardId List
             | SetCardSubscribed CardId Bool
      deriving (Eq, Show, Ord)
 
-diffCards :: ListId -> Set Card -> Set Card -> [Change]
+diffCards :: ListId -> Set Card -> Set Card -> [(Text, Change)]
 diffCards l old new =
   concatMap (\o -> case find (\n -> cardName o == cardName n) new of
-                     Nothing -> [RemoveCard l (cardId o)]
+                     Nothing -> [("Remove card '" <> cardName o <> "'"
+                                 , RemoveCard l (cardId o))]
                      Just n ->
                        catMaybes
                           [if cardLabels o /= cardLabels n
-                            then Just $ SetCardLabels (cardId o) (cardLabels n)
+                            then Just $ ("Set labels on '" <> cardName o <> "' to " <> (T.intercalate ", " (cardLabels n)),
+                                         SetCardLabels (cardId o) (cardLabels n))
                             else Nothing,
                           if cardDescription o /= cardDescription n
-                           then Just $ SetCardDesc (cardId o) (cardDescription n)
+                           then Just $ ("Set description on '" <> cardName o <> "' to " <> cardDescription n, SetCardDesc (cardId o) (cardDescription n))
                            else Nothing,
                           if cardSubscribed o /= cardSubscribed n
-                           then Just $ SetCardSubscribed (cardId o) (cardSubscribed n)
+                           then Just $ ("Subscribe to '" <> cardName o <> "'", SetCardSubscribed (cardId o) (cardSubscribed n))
                            else Nothing
                           ]
                        )
             old
   <> concatMap (\n -> case find (\o -> cardName o == cardName n) old of
-                        Nothing -> [AddCard l n]
+                        Nothing -> [("Add card '" <> cardName n <> "'", AddCard l n)]
                         Just _ -> []) new
 
-diffLists :: BoardId -> Set List -> Set List -> [Change]
+diffLists :: BoardId -> Set List -> Set List -> [(Text, Change)]
 diffLists b old new = concatMap (\o -> case find (\n -> listName o == listName n) new of
-                                         Nothing -> [RemoveList b (listId o)]
+                                         Nothing -> [("Remove list '" <> listName o <> "'"
+                                                     ,RemoveList b (listId o))]
                                          Just n -> diffCards (listId o)
                                                              (listCards o)
                                                              (listCards n)) old
                    <> concatMap (\n -> case find (\o -> listName o == listName n) old of
-                                         Nothing -> [AddList b n]
+                                         Nothing -> [("Add list '" <> listName n <> "'"
+                                                     , AddList b n)]
                                          Just _ -> []) new
 
 effectChange :: Creds -> Change -> IO ()

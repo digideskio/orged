@@ -80,13 +80,14 @@ top3DoneStrategy summaryBoard projectBoards =
                                                   (boardLists summaryBoard)
      summaryBoard { boardLists = newLists }
 
-run :: IO ()
-run = do e <- doesFileExist ".env"
-         when e $ Configuration.Dotenv.loadFile True ".env"
-         summaryName <- readSummaryName
-         allBoards <- getOrgedUserBoards
-         let [summaryBoard] = filter ((== summaryName) . boardName) allBoards
-         let projectBoards = filter ((/= summaryName) . boardName) allBoards
+run :: (Text -> IO ()) -> IO ()
+run log = do e <- doesFileExist ".env"
+             when e $ Configuration.Dotenv.loadFile True ".env"
+             summaryName <- readSummaryName
+             allBoards <- getOrgedUserBoards
+             let [summaryBoard] = filter ((== summaryName) . boardName) allBoards
+             let projectBoards = filter ((/= summaryName) . boardName) allBoards
 
-         Web.Trello.Sync.updateBoard summaryBoard
-                                     (top3DoneStrategy summaryBoard projectBoards)
+             Web.Trello.Sync.updateBoard log
+                                         summaryBoard
+                                         (top3DoneStrategy summaryBoard projectBoards)
