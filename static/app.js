@@ -30,13 +30,17 @@ var App = {
         }, console.error);
     }
 
+    if (Orged.messages().length !== 0) {
+      var clear = m(".clear", { onclick: function () { Orged.messages([]); } }, "clear");
+    }
+
     return m("div",
              [m("button#button", { onclick: post }, "SYNC"),
               m("pre", ctrl.summary()),
               m("pre", [
                 "Messages:\n-----\n" + Orged.messages().join("\n"),
                 m("br"),
-                m(".clear", { onclick: function () { Orged.messages([]); } }, "clear")
+                clear
               ])
 
              ]);
