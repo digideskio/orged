@@ -53,6 +53,7 @@ data Card = Card { cardId          :: CardId
                  , cardSubscribed  :: Bool
                  , cardLabels      :: [Text]
                  , cardUrl         :: Text
+                 , cardEmail       :: Text
                  } deriving (Eq, Show, Ord)
 
 newtype ListId = ListId { unListId :: Text } deriving (Eq, Show, Ord)
@@ -120,10 +121,12 @@ updateBoard log old new =
                           effectChange creds c) changes
 
 -- HTTP Helpers
-
-get' (Creds (k,t)) u =
-  getWith (defaults & param "key" .~ [k] & param "token" .~ [t])
+get'' (Creds (k,t)) u args =
+  getWith (defaults & params .~ ([("key", k), ("token", t)] ++ args))
           (T.unpack u)
+
+get' creds u = get'' creds u []
+
 post' (Creds (k,t)) u args =
   postWith (defaults & params .~ (("key", k) : ("token", t) : args))
            (T.unpack u)
@@ -157,22 +160,31 @@ cardLabelsEndpoint :: CardId -> Text
 cardLabelsEndpoint i = cardEndpoint i <> "/labels"
 cardDescEndpoint :: CardId -> Text
 cardDescEndpoint i = cardEndpoint i <> "/desc"
+cardCommentsEndpoint :: CardId -> Text
+cardCommentsEndpoint i = cardEndpoint i <> "/actions/comments"
 userBoardsEndpoint :: Text -> Text
 userBoardsEndpoint userId = "https://api.trello.com/1/members/" <> userId <> "/boards"
 
 
-
 -- Private API functions
+
+parseCard v = Card (CardId (v ^?! key "id" . _String))
+                   (v ^?! key "name" . _String)
+                   (v ^?! key "desc" . _String)
+                   (v ^?! key "subscribed" . _Bool)
+                   (v ^.. key "labels" . values . key "color" . _String)
+                   (v ^?! key "shortUrl" . _String)
+                   (v ^?! key "email" . _String)
+
+getCard :: Creds -> CardId -> IO Card
+getCard creds cardId =
+  do r <- get'' creds (cardEndpoint cardId) [("fields", "all")]
+     return (parseCard (r ^?! responseBody))
 
 getCards :: Creds -> ListId -> IO [Card]
 getCards creds listId =
   do r <- get' creds (listCardsEndpoint listId)
-     return $ map (\v -> Card (CardId (v ^?! key "id" . _String))
-                              (v ^?! key "name" . _String)
-                              (v ^?! key "desc" . _String)
-                              (v ^?! key "subscribed" . _Bool)
-                              (v ^.. key "labels" . values . key "color" . _String)
-                              (v ^?! key "shortUrl" . _String))
+     return $ map parseCard
                   (r ^.. responseBody . values)
 
 getLists :: Creds -> BoardId -> IO [List]
@@ -230,6 +242,10 @@ archiveCard :: Creds -> CardId -> IO ()
 archiveCard creds card = do put' creds (cardEndpoint card) [("closed", "true")]
                             return ()
 
+addComment :: Creds -> CardId -> Text -> IO ()
+addComment creds card comment =
+  do post' creds (cardCommentsEndpoint card) [("text", comment)]
+     return ()
 
 -- Diffing implementation
 
@@ -285,7 +301,9 @@ effectChange creds (AddList board list) =
            (listCards list)
 effectChange creds (RemoveList board list) = archiveList creds list
 effectChange creds (AddCard list card) =
-  do addCard creds list (cardName card) (cardDescription card) (cardSubscribed card) (cardLabels card)
+  do cardId <- addCard creds list (cardName card) (cardDescription card) (cardSubscribed card) (cardLabels card)
+     newCard <- getCard creds cardId
+     addComment creds cardId ("[[email " <> cardEmail newCard <> " ]]")
      return ()
 effectChange creds (RemoveCard list card) = archiveCard creds card
 effectChange creds (SetCardDesc card desc) = setCardDesc creds card desc
