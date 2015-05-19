@@ -302,8 +302,7 @@ effectChange creds (AddList board list) =
 effectChange creds (RemoveList board list) = archiveList creds list
 effectChange creds (AddCard list card) =
   do cardId <- addCard creds list (cardName card) (cardDescription card) (cardSubscribed card) (cardLabels card)
-     newCard <- getCard creds cardId
-     addComment creds cardId ("[[email " <> cardEmail newCard <> " ]]")
+     addComment creds cardId ("[[ " <> cardEmail card <> " ]]")
      return ()
 effectChange creds (RemoveCard list card) = archiveCard creds card
 effectChange creds (SetCardDesc card desc) = setCardDesc creds card desc
