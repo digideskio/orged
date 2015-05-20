@@ -42,8 +42,8 @@ top3DoneStrategy summaryBoard projectBoards =
   do let addPrefix p c = c { cardName = p <> cardName c }
      let setLabel l c = c { cardLabels = [l] }
      let setDoneLabel = setLabel "green"
-     let setTodoLabel = setLabel "yellow"
-     let setInbetweenLabel = setLabel "purple"
+     let setTodoLabel = setLabel "blue"
+     let setInbetweenLabel = setLabel "orange"
      let customize c = c { cardSubscribed = True, cardDescription = cardUrl c, cardLabels = [] }
      let findAll name = concatMap (\b -> case find (\l -> listName l == name)
                                                    (boardLists b) of
