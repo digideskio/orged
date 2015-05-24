@@ -102,9 +102,7 @@ run :: (Text -> IO ()) -> IO ()
 run log = do e <- doesFileExist ".env"
              when e $ Configuration.Dotenv.loadFile True ".env"
              summaryName <- readSummaryName
-             print "Reading boards..."
              allBoards <- getOrgedUserBoards
-             print "Computing difference and updating..."
              let [summaryBoard] = filter ((== summaryName) . boardName) allBoards
              let projectBoards = filter ((/= summaryName) . boardName) allBoards
 

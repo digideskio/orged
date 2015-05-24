@@ -22,7 +22,6 @@ import           Network.Wai.Handler.WebSockets
 import           Network.WebSockets
 import           System.Directory
 import           System.Environment
-import           System.Remote.Monitoring
 import           Web.Scotty
 
 import qualified Lib
@@ -80,7 +79,6 @@ workerThread clients request = forever $
 
 main :: IO ()
 main = do
-  forkServer "localhost" 4000
   port <- read <$> getEnv "PORT"
   clients <- newMVar []
   request <- newMVar False

@@ -81,12 +81,9 @@ getUserBoardNames userId =
 getUserBoards :: Text -> IO [Board]
 getUserBoards userId =
   do creds <- readCreds
-     print "Getting request"
      r <- get' creds (userBoardsEndpoint userId)
-     print "Processing boards"
      mapM (\v ->
                do let boardId = BoardId (v ^?! key "id" . _String)
-                  print "Getting board..."
                   lists <- getLists creds boardId
                   return $ Board boardId
                                  (v ^?! key "name" . _String)
@@ -170,6 +167,7 @@ userBoardsEndpoint userId = "https://api.trello.com/1/members/" <> userId <> "/b
 
 
 -- Private API functions
+cardFields = "desc,email,labels,name,shortUrl,subscribed"
 
 parseCard v = Card (CardId (v ^?! key "id" . _String))
                    (v ^?! key "name" . _String)
@@ -185,24 +183,21 @@ getCard creds cardId =
      return (parseCard (r ^?! responseBody))
 
 
-
-
 getCards :: Creds -> ListId -> IO [Card]
 getCards creds listId =
-  do r <- get'' creds (listCardsEndpoint listId) [("fields", "desc,email,labels,name,shortUrl,subscribed")]
+  do r <- get'' creds (listCardsEndpoint listId) [("fields", cardFields)]
      return $ map parseCard
                   (r ^.. responseBody . values)
 
 getLists :: Creds -> BoardId -> IO [List]
 getLists creds boardId =
-  do r <- get' creds (boardListEndpoint boardId)
-     mapM (\v -> do let listId = ListId (v ^?! key "id" . _String)
-                    cards <- getCards creds listId
-                    return $ List listId
-                                  (v ^?! key "name" . _String)
-                                  cards
-                                  )
-                  (r ^.. responseBody . values)
+  do r <- get'' creds (boardListEndpoint boardId)
+                      [("cards", "open")
+                      ,("card_fields", cardFields)]
+     return $ map (\v -> List (ListId (v ^?! key "id" . _String))
+                              (v ^?! key "name" . _String)
+                              (map parseCard (v ^.. key "cards" . values)))
+                         (r ^.. responseBody . values)
 
 notClosed v = not $ v ^?! key "closed" . _Bool
 

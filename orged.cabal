@@ -36,7 +36,6 @@ executable orged
               , warp
               , uuid
               , bytestring
-              , ekg
   hs-source-dirs:      src
   default-language:    Haskell2010
-  ghc-options: -with-rtsopts=-T -O2
+  ghc-options: -O2
