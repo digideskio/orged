@@ -22,6 +22,7 @@ import           Network.Wai.Handler.WebSockets
 import           Network.WebSockets
 import           System.Directory
 import           System.Environment
+import           System.Remote.Monitoring
 import           Web.Scotty
 
 import qualified Lib
@@ -79,6 +80,7 @@ workerThread clients request = forever $
 
 main :: IO ()
 main = do
+  forkServer "localhost" 4000
   port <- read <$> getEnv "PORT"
   clients <- newMVar []
   request <- newMVar False
@@ -88,6 +90,9 @@ main = do
        post "/" $ do liftIO $ broadcast clients "Queuing request..."
                      liftIO $ modifyMVar_ request (const (return True))
                      text ""
+       get "/go" $ do liftIO $ broadcast clients "Queuing request..."
+                      liftIO $ modifyMVar_ request (const (return True))
+                      redirect "/"
        get "/summary" $ do p <- liftIO $
                              do e <- doesFileExist ".env"
                                 when e $ Configuration.Dotenv.loadFile True ".env"

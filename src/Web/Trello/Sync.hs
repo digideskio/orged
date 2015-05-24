@@ -81,9 +81,12 @@ getUserBoardNames userId =
 getUserBoards :: Text -> IO [Board]
 getUserBoards userId =
   do creds <- readCreds
+     print "Getting request"
      r <- get' creds (userBoardsEndpoint userId)
+     print "Processing boards"
      mapM (\v ->
                do let boardId = BoardId (v ^?! key "id" . _String)
+                  print "Getting board..."
                   lists <- getLists creds boardId
                   return $ Board boardId
                                  (v ^?! key "name" . _String)
@@ -181,9 +184,12 @@ getCard creds cardId =
   do r <- get'' creds (cardEndpoint cardId) [("fields", "all")]
      return (parseCard (r ^?! responseBody))
 
+
+
+
 getCards :: Creds -> ListId -> IO [Card]
 getCards creds listId =
-  do r <- get' creds (listCardsEndpoint listId)
+  do r <- get'' creds (listCardsEndpoint listId) [("fields", "desc,email,labels,name,shortUrl,subscribed")]
      return $ map parseCard
                   (r ^.. responseBody . values)
 
