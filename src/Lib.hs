@@ -37,38 +37,38 @@ getOrgedUserBoardNames :: IO [Text]
 getOrgedUserBoardNames = do userId <- T.pack <$> getEnv "ORGED_USER_ID"
                             getUserBoardNames userId
 
-top3DoneStrategy :: Board -> [Board] -> Board
-top3DoneStrategy summaryBoard projectBoards =
+topDoneStrategy :: Board -> [Board] -> Board
+topDoneStrategy summaryBoard projectBoards =
   do let addPrefix p c = c { cardName = p <> cardName c }
      let setLabel l c = c { cardLabels = [l] }
      let setDoneLabel = setLabel "green"
      let setTodoLabel = setLabel "blue"
      let setInbetweenLabel = setLabel "orange"
      let customize c = c { cardSubscribed = True, cardDescription = cardUrl c, cardLabels = [] }
-     let findAll name = concatMap (\b -> case find (\l -> listName l == name)
+     let findAll name = concatMap (\b -> case find (\l -> name `T.isPrefixOf` listName l)
                                                    (boardLists b) of
                                     Nothing -> []
                                     Just l -> map (addPrefix (boardName b <> ": "))
                                                   (listCards l))
                             projectBoards
-     let exists name lists = any ((== name) . listName) lists
-     let top3 = findAll "Top 3"
+     let exists name lists = any ((T.isPrefixOf name) . listName) lists
+     let top = findAll "Top"
      let done = findAll "Done"
      let inbetween =
            concatMap (\b ->
              let lists = boardLists b in
-             if exists "Top 3" lists &&
-                exists "Done" (dropWhile ((/= "Top 3") . listName) lists)
+             if exists "Top" lists &&
+                exists "Done" (dropWhile (not . (T.isPrefixOf "Top") . listName) lists)
                 then let middle =
-                           takeWhile ((/= "Done") . listName)
+                           takeWhile (not . (T.isPrefixOf "Done") . listName)
                            . tail
-                           . dropWhile ((/= "Top 3") . listName)
+                           . dropWhile (not . (T.isPrefixOf "Top") . listName)
                            $ lists in
                          concatMap (map (addPrefix (boardName b <> ": ")) . listCards)
                                    middle
 
                 else []) projectBoards
-     let allOurs = top3 <> inbetween <> done
+     let allOurs = top <> inbetween <> done
      let allExisting = concatMap (\l -> map cardName $ listCards l)
                                  (boardLists summaryBoard)
      let unscheduled =
@@ -77,7 +77,7 @@ top3DoneStrategy summaryBoard projectBoards =
      let updateCard c =
            case find ((== cardName c) . cardName) done of
              Nothing ->
-               case find ((== cardName c) . cardName) top3 of
+               case find ((== cardName c) . cardName) top of
                  Nothing ->
                    case find ((== cardName c) . cardName) inbetween of
                      Nothing -> c
@@ -108,4 +108,4 @@ run log = do e <- doesFileExist ".env"
 
              Web.Trello.Sync.updateBoard log
                                          summaryBoard
-                                         (top3DoneStrategy summaryBoard projectBoards)
+                                         (topDoneStrategy summaryBoard projectBoards)

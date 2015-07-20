@@ -1,0 +1,6 @@
+flags: {}
+packages:
+- '.'
+extra-deps:
+- dotenv-0.1.0.8
+resolver: nightly-2015-07-03
