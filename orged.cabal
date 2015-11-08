@@ -2,7 +2,7 @@
 --  see http://haskell.org/cabal/users-guide/
 
 name:                orged
-version:             0.1.0.0
+version:             0.2.0.0
 -- synopsis:
 -- description:
 license:             ISC
@@ -26,7 +26,7 @@ executable orged
               , lens
               , lens-aeson
               , mtl
-              , scotty
+              , fn
               , text
               , wreq
               , directory
@@ -34,6 +34,8 @@ executable orged
               , websockets
               , wai-websockets
               , warp
+              , wai
+              , http-types
               , uuid
               , bytestring
   hs-source-dirs:      src

@@ -17,12 +17,14 @@ import qualified Data.Text                      as T
 import qualified Data.Text.Lazy                 as LT
 import           Data.UUID                      (toASCIIBytes)
 import           Data.UUID.V4                   (nextRandom)
+import           Network.HTTP.Types.Method
+import           Network.Wai                    (Response)
 import           Network.Wai.Handler.Warp       (run)
 import           Network.Wai.Handler.WebSockets
-import           Network.WebSockets
+import           Network.WebSockets             hiding (Response)
 import           System.Directory
 import           System.Environment
-import           Web.Scotty
+import           Web.Fn
 
 import qualified Lib
 
@@ -77,29 +79,49 @@ workerThread clients request = forever $
                  broadcast clients "Finished sync..."
      threadDelay 100000
 
+data Ctxt = Ctxt { _req          :: FnRequest
+                 , _clients      :: MVar State
+                 , _sync_request :: MVar Bool }
+instance RequestContext Ctxt where
+  getRequest = _req
+  setRequest c r = c { _req = r }
+
+site :: Ctxt -> IO Response
+site ctxt = route ctxt [end // method GET  ==> homeH
+                       ,end // method POST ==> queueH
+                       ,path "go"          ==> goH
+                       ,path "summary"     ==> summaryH
+                       ,anything           ==> staticServe "static"
+                       ]
+                  `fallthrough` notFoundText "Page not found."
+
+homeH :: Ctxt -> IO (Maybe Response)
+homeH _ = okHtml page
+
+queueH :: Ctxt -> IO (Maybe Response)
+queueH ctxt = do broadcast (_clients ctxt) "Queuing request..."
+                 modifyMVar_ (_sync_request ctxt) (const (return True))
+                 okText ""
+
+goH :: Ctxt -> IO (Maybe Response)
+goH ctxt = do liftIO $ broadcast (_clients ctxt) "Queuing request..."
+              liftIO $ modifyMVar_ (_sync_request ctxt) (const (return True))
+              redirect "/"
+
+summaryH :: Ctxt -> IO (Maybe Response)
+summaryH _ = do s <- Lib.readSummaryName
+                names <- filter (/= s) <$> Lib.getOrgedUserBoardNames
+                okText (T.intercalate "\n" (s <> "\n-----":names))
+
 main :: IO ()
 main = do
   port <- read <$> getEnv "PORT"
+  e <- doesFileExist ".env"
+  when e $ Configuration.Dotenv.loadFile True ".env"
   clients <- newMVar []
   request <- newMVar False
   forkIO (workerThread clients request)
-  app <- scottyApp $
-    do get "/" $ do html page
-       post "/" $ do liftIO $ broadcast clients "Queuing request..."
-                     liftIO $ modifyMVar_ request (const (return True))
-                     text ""
-       get "/go" $ do liftIO $ broadcast clients "Queuing request..."
-                      liftIO $ modifyMVar_ request (const (return True))
-                      redirect "/"
-       get "/summary" $ do p <- liftIO $
-                             do e <- doesFileExist ".env"
-                                when e $ Configuration.Dotenv.loadFile True ".env"
-                                s <- liftIO Lib.readSummaryName
-                                names <- filter (/= s) <$> liftIO Lib.getOrgedUserBoardNames
-                                return (T.intercalate "\n" (s <> "\n-----":names))
-                           text (LT.fromStrict p)
-       get "/app.js" $ do setHeader "Content-Type" "text/javascript"
-                          file "static/app.js"
-       get "/m.js" $ do setHeader "Content-Type" "text/javascript"
-                        file "static/m.js"
-  run port (websocketsOr defaultConnectionOptions (socketHandler clients) app)
+  let ctxt = (Ctxt defaultFnRequest clients request)
+  run port (websocketsOr defaultConnectionOptions
+                         (socketHandler clients)
+                         (toWAI ctxt site))
